@@ -83,8 +83,11 @@ let C = null;          // context passed by main.js { fields, spots, activeSpot,
 let S = null;          // ui state { layer, frame, playing, view }
 let R = null;          // live DOM refs, refreshed on every attach
 let hitSpots = [];
+let lastActive = null; // last seen activeSpot — a change triggers spot-focus zoom
 const pre = new Map(); // prerender cache "layer|frame" -> { canvas, contours }
 let timer = 0;
+
+const SPOT_ZOOM = 10;  // integer tile zoom for spot focus (~75 km across)
 
 const layerDef = () => LAYERS.find((l) => l.id === S.layer);
 const frames = () => C.fields.frames;
@@ -438,6 +441,15 @@ export function initFieldMap(ctx) {
     S = { layer: 'swh', frame: fi, playing: false, view: null };
   }
   if (!S.view) S.view = fitRegion(el.clientWidth || 900, el.clientHeight || 460);
+  // Focus the map on the spot when the selection changes (map click or tab);
+  // first load keeps the Denmark-wide overview. ⌂ button = back to overview.
+  if (lastActive === null) {
+    lastActive = C.activeSpot;
+  } else if (C.activeSpot !== lastActive) {
+    lastActive = C.activeSpot;
+    const sp = C.spots[C.activeSpot];
+    if (sp) S.view = { lat: sp.lat, lon: sp.lon, z: SPOT_ZOOM };
+  }
   build(el);
   syncControls();
   draw();

@@ -209,7 +209,7 @@ function render() {
       ${DATA.spots.map((sp, i) =>
         `<button class="${i === activeSpot ? 'active' : ''}" data-i="${i}">${sp.name}</button>`).join('')}
     </nav>
-    <div class="card"><h2>Regional forecast map — DMI WAM model fields · drag to pan, scroll to zoom · click a spot to select it</h2>
+    <div class="card"><h2>Regional forecast map — DMI WAM model fields · drag to pan, scroll to zoom · click a spot to zoom to it · ⌂ full view</h2>
       <div class="satmap fieldmap" id="fieldmap"></div></div>
     ${zoombarHtml()}
     <main>${renderSpot(DATA.spots[activeSpot])}</main>
