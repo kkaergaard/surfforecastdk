@@ -9,33 +9,28 @@ HARMONIE-DINI) & OceanObs · long range: ECMWF IFS/WAM & NOAA GFS/GFS-Wave via
 [Open-Meteo](https://open-meteo.com/). Ratings are a local heuristic, not an
 official DMI product.
 
-## Publishing (one-time setup, ~10 min)
+## Publishing — Vercel (same host as StretchFlow)
 
-The site is fully static; the data pipeline runs in GitHub Actions 4×/day and
-deploys to GitHub Pages automatically (workflow already included at
-`.github/workflows/refresh.yml`).
+The site is fully static; `frontend/vercel.json` already pins the Vite build
+settings. One-time login, then deploys are one command:
 
-1. **Create the repo** on [github.com/new](https://github.com/new)
-   - Name: e.g. `dk-surf-forecast`
-   - **Public** recommended: GitHub Actions is free for public repos
-     (the 4×/day pipeline uses ~2–3 000 min/month, above the free
-     private-repo allowance).
-2. **Push this project** (from the project root):
-   ```bash
-   git remote add origin https://github.com/<your-user>/dk-surf-forecast.git
-   git push -u origin main
-   ```
-3. **Enable Pages**: repo → **Settings → Pages → Source: "GitHub Actions"**.
-4. **First deploy**: repo → **Actions → "Refresh forecast data & deploy" →
-   Run workflow**. The first run downloads the full GRIB set (~460 MB) and
-   takes ~15–25 min; later runs are faster.
-5. Site goes live at `https://<your-user>.github.io/dk-surf-forecast/`
-   (custom domain: Settings → Pages → Custom domain — the build is
-   sub-path safe, no config change needed).
+```bash
+cd frontend
+npx vercel login          # one-time, opens browser / email verification
+npx vercel --prod --yes   # first run creates the project; later runs redeploy
+```
 
-After that the site updates itself 4×/day at 03:14 / 09:14 / 15:14 / 21:14 UTC
-(≈3 h after each DMI model cycle). Every run is visible in the Actions tab,
-including which data sources succeeded.
+The local 4×/day data-refresh task (Kimi cron) can redeploy automatically
+after each successful refresh, so the public site stays current while the
+laptop is on.
+
+### Alternative: GitHub Pages (laptop-independent)
+
+`.github/workflows/refresh.yml` runs the full data pipeline in the cloud
+4×/day and deploys to GitHub Pages — the site keeps updating even when this
+machine is off. Public repo recommended (free Actions minutes). Steps:
+create repo → push → Settings → Pages → Source "GitHub Actions" → run the
+workflow once. Site: `https://<your-user>.github.io/<repo>/`.
 
 ## Local development
 
