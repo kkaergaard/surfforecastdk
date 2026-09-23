@@ -58,6 +58,7 @@ import math
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -70,8 +71,13 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT_PATH = ROOT / "frontend" / "public" / "data" / "forecast.json"
 CACHE_DIR = ROOT / "backend" / "cache"
 
-EDR_BASE = "https://dmigw.govcloud.dk/v1/forecastedr"
+# DMI retired dmigw.govcloud.dk in 2026 — the APIs now live on opendataapi.dmi.dk.
+EDR_BASE = "https://opendataapi.dmi.dk/v1/forecastedr"
 OCEAN_BASE = "https://opendataapi.dmi.dk/v2/oceanObs"
+# Hi-res wind: DMI's EDR /position endpoint is persistently throttled (429
+# storms, observed July+Sept 2026), so HARMONIE-DINI wind is fetched through
+# Open-Meteo's dmi_seamless model instead — same DMI model data, reliable API.
+OPENMETEO_URL = "https://api.open-meteo.com/v1/forecast"
 
 WAM_COLLECTIONS = ["wam_dw", "wam_nsb"]  # default per-spot fallback order
 HARMONIE_COLLECTION = "harmonie_dini_sf"
@@ -650,6 +656,59 @@ def fetch_edr_series(collection, spot, params, t_from, t_to, deadline,
     return rows, meta
 
 
+def fetch_harmonie_openmeteo(spot, t_from, t_to, deadline):
+    """HARMONIE-DINI hi-res wind via Open-Meteo (dmi_seamless) → (rows, meta)
+    in the same shape as fetch_edr_series, so downstream compose is unchanged.
+
+    Open-Meteo returns temperature in °C and wind in m/s (wind_speed_unit=ms);
+    temperature is converted to Kelvin here to match the EDR contract
+    (compose_hours converts K → °C)."""
+    del deadline  # Open-Meteo is fast and reliable; no patient backoff needed
+    qs = urllib.parse.urlencode({
+        "latitude": spot["lat"], "longitude": spot["lon"],
+        "hourly": "wind_speed_10m,wind_direction_10m,wind_gusts_10m,temperature_2m",
+        "models": "dmi_seamless",
+        "forecast_days": 4, "timezone": "UTC", "wind_speed_unit": "ms",
+    })
+    req = urllib.request.Request(
+        f"{OPENMETEO_URL}?{qs}",
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    h = data.get("hourly", {})
+    times = h.get("time") or []
+    rows = []
+    for i, t in enumerate(times):
+        ws = _idx(h.get("wind_speed_10m"), i)
+        if not isinstance(ws, (int, float)):
+            continue
+        tc = _idx(h.get("temperature_2m"), i)
+        rows.append({
+            "step": step_key(t + "Z"),
+            "wind-speed-10m": ws,
+            "wind-dir-10m": _idx(h.get("wind_direction_10m"), i),
+            "gust-wind-speed-10m": _idx(h.get("wind_gusts_10m"), i),
+            "temperature-2m": tc + 273.15 if isinstance(tc, (int, float)) else None,
+        })
+    rows.sort(key=lambda r: r["step"])
+    good = sum(1 for r in rows if isinstance(r.get("wind-speed-10m"), (int, float)))
+    if good < 24:
+        raise SourceUnavailable(
+            f"dmi_seamless: wind numeric in only {good}/{len(rows)} steps")
+    meta = {
+        "collection": "dmi_seamless@open-meteo",
+        "fetched_at": iso_z(datetime.now(timezone.utc)),
+        "steps": len(rows),
+        "first_step": key_to_iso(rows[0]["step"]) if rows else None,
+        "last_step": key_to_iso(rows[-1]["step"]) if rows else None,
+    }
+    return rows, meta
+
+
+def _idx(arr, i):
+    return arr[i] if isinstance(arr, list) and i < len(arr) else None
+
+
 def fetch_tides(station_id, t_from, t_to, deadline):
     """OceanObs tidewater items → (tides, high_low, meta). Follows pagination."""
     url = (
@@ -955,17 +1014,31 @@ def main() -> int:
 
     spots_out, notes = [], []
 
-    # Process spots whose HARMONIE wind cache is missing or stale FIRST.
-    # The EDR endpoint is often only responsive in short windows; with a fixed
-    # order the limited time budget would always be spent on the first-listed
-    # spots and the tail would never get hi-res wind. Output order below
-    # stays exactly as configured in SPOTS.
+    # HARMONIE hi-res wind pre-pass: Open-Meteo calls are quick (~2 s/spot),
+    # so fetch every stale spot BEFORE the spot loop — the loop's WAM/compose
+    # work can otherwise exhaust the budget before tail spots ever fetch wind
+    # (observed 2026-09-23). The loop re-reads these fresh caches instantly.
+    # Priority: spots with no cache first, then stalest-first. Output order
+    # below stays exactly as configured in SPOTS.
     def _harm_cache_priority(spot):
         c = read_cache(CACHE_DIR / f"harmonie_{spot['id']}.json")
         if not c:
             return (0, float("inf"))          # no cache at all → first
         age = cache_age_s(c)
         return (2, age) if age < CACHE_FRESH_HARMONIE_S else (1, age)
+
+    for _s in sorted(SPOTS, key=_harm_cache_priority):
+        def _fetch_harm0(deadline, spot=_s):
+            rows, meta = fetch_harmonie_openmeteo(
+                spot, t0, t0 + timedelta(hours=HARMONIE_HOURS), deadline)
+            if not rows:
+                raise SourceUnavailable("empty series")
+            return rows, meta
+        get_source(
+            f"harmonie_{_s['id']}", _fetch_harm0, CACHE_FRESH_HARMONIE_S,
+            t0 + timedelta(hours=24), deadline, args.force,
+            f"{_s['id']} HARMONIE (pre-pass)", offline=args.from_cache,
+        )
 
     spot_pos = {s["id"]: i for i, s in enumerate(SPOTS)}
     for spot in sorted(SPOTS, key=_harm_cache_priority):
@@ -974,6 +1047,11 @@ def main() -> int:
 
         # --- waves ---
         def _fetch_wam(deadline, spot=spot):
+            # The throttled EDR endpoint is a LAST RESORT for a spot with no
+            # STAC cache at all — ingest_stac.py owns WAM refreshing. Never
+            # burn the run budget on a 429-storm when a (stale) cache exists.
+            if read_cache(CACHE_DIR / f"wam2_{sid}.json"):
+                raise SourceUnavailable("STAC cache present — EDR fallback disabled")
             last_err = "no attempt"
             colls = WAM_COLLECTIONS_BY_SPOT.get(sid, WAM_COLLECTIONS)
             for coll in colls:
@@ -1016,12 +1094,13 @@ def main() -> int:
         harm_status = "missing"
         if wam_rows is not None:
             def _fetch_harm(deadline, spot=spot):
-                rows, meta = fetch_edr_series(
-                    HARMONIE_COLLECTION, spot, HARMONIE_PARAMS,
-                    t0, t0 + timedelta(hours=HARMONIE_HOURS), deadline,
-                    required_param="wind-speed-10m")
+                # DMI HARMONIE-DINI via Open-Meteo — the DMI EDR /position
+                # endpoint is persistently throttled (429 storms), and its old
+                # host (dmigw.govcloud.dk) was retired in 2026.
+                rows, meta = fetch_harmonie_openmeteo(
+                    spot, t0, t0 + timedelta(hours=HARMONIE_HOURS), deadline)
                 if not rows:
-                    raise SourceUnavailable("empty feature set")
+                    raise SourceUnavailable("empty series")
                 return rows, meta
             harm_rows, harm_status, harm_meta = get_source(
                 f"harmonie_{sid}", _fetch_harm, CACHE_FRESH_HARMONIE_S,

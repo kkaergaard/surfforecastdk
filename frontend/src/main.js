@@ -213,8 +213,8 @@ function render() {
       <div class="satmap fieldmap" id="fieldmap"></div></div>
     ${zoombarHtml()}
     <main>${renderSpot(DATA.spots[activeSpot])}</main>
-    <footer>Data: <a href="https://www.dmi.dk/fri-data" target="_blank" rel="noopener">DMI</a> Forecast Data (WAM · HARMONIE-DINI) &amp; DMI OceanObs tide predictions ·
-      long range: ECMWF IFS/WAM &amp; NOAA GFS/GFS-Wave via <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> ·
+    <footer>Data: <a href="https://www.dmi.dk/fri-data" target="_blank" rel="noopener">DMI</a> WAM waves · DMI HARMONIE-DINI hi-res wind via <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · DMI OceanObs tide predictions ·
+      long range: ECMWF IFS/WAM &amp; NOAA GFS/GFS-Wave via Open-Meteo ·
       ratings are a local heuristic, not an official DMI product</footer>`;
 
   app.querySelectorAll('nav.tabs button').forEach((b) => {
