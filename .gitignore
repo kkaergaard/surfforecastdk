@@ -1,0 +1,15 @@
+# Dependencies & build output
+node_modules/
+frontend/dist/
+
+# Python
+__pycache__/
+*.pyc
+
+# Pipeline caches (GRIB downloads, extracted time series — regenerated every run)
+backend/cache/
+
+# Logs & OS noise
+*.log
+.DS_Store
+Thumbs.db

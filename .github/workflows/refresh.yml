@@ -1,0 +1,65 @@
+name: Refresh forecast data & deploy
+
+# Runs ~3 h after each DMI model cycle (00/06/12/18 UTC), same cadence as the
+# local cron task. Can also be started manually from the Actions tab.
+on:
+  schedule:
+    - cron: "14 3,9,15,21 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  refresh-build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python deps (GRIB parsing)
+        run: pip install cfgrib xarray
+
+      - name: DMI WAM waves + wind (STAC bulk download)
+        run: python backend/ingest_stac.py --budget-seconds 1500
+
+      - name: Regional map fields
+        run: python backend/export_fields.py
+
+      - name: Long range (ECMWF/GFS via Open-Meteo)
+        run: python backend/ingest_longrange.py --budget-seconds 300
+
+      - name: Tides + hi-res wind + compose forecast.json
+        run: python backend/ingest.py --budget-seconds 600
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build site
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
