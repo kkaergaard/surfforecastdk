@@ -24,13 +24,22 @@ The local 4×/day data-refresh task (Kimi cron) can redeploy automatically
 after each successful refresh, so the public site stays current while the
 laptop is on.
 
-### Alternative: GitHub Pages (laptop-independent)
+### Cloud updater (laptop-independent): GitHub Actions → Vercel
 
 `.github/workflows/refresh.yml` runs the full data pipeline in the cloud
-4×/day and deploys to GitHub Pages — the site keeps updating even when this
-machine is off. Public repo recommended (free Actions minutes). Steps:
-create repo → push → Settings → Pages → Source "GitHub Actions" → run the
-workflow once. Site: `https://<your-user>.github.io/<repo>/`.
+4×/day and deploys to the same Vercel project — the site keeps updating even
+when this machine is off. Setup (one time):
+
+1. Create a **public** GitHub repo (public = free Actions minutes) and push:
+   ```bash
+   git remote add origin https://github.com/<your-user>/dk-surf-forecast.git
+   git push -u origin main
+   ```
+2. Create a token at [vercel.com/account/tokens](https://vercel.com/account/tokens)
+   (scope: the `kaergaard1` team), then add it as repo secret `VERCEL_TOKEN`
+   (repo → Settings → Secrets and variables → Actions).
+3. Repo → Actions → "Refresh forecast data & deploy" → **Run workflow**.
+   First run takes ~15–25 min (full GRIB download); later runs are faster.
 
 ## Local development
 

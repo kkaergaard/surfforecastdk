@@ -1,7 +1,8 @@
 name: Refresh forecast data & deploy
 
-# Runs ~3 h after each DMI model cycle (00/06/12/18 UTC), same cadence as the
-# local cron task. Can also be started manually from the Actions tab.
+# Runs ~3 h after each DMI model cycle (00/06/12/18 UTC). Can also be started
+# manually from the Actions tab. Deploys the rebuilt site to Vercel production
+# (https://dk-surf-forecast.vercel.app) — the laptop stays out of the loop.
 on:
   schedule:
     - cron: "14 3,9,15,21 * * *"
@@ -9,19 +10,14 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: vercel-prod
   cancel-in-progress: true
 
 jobs:
   refresh-build-deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -48,18 +44,17 @@ jobs:
         with:
           node-version: 22
 
-      - name: Build site
+      - name: Validate build
         working-directory: frontend
         run: |
           npm ci
           npm run build
 
-      - uses: actions/configure-pages@v5
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: frontend/dist
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      # VERCEL_ORG_ID / VERCEL_PROJECT_ID link the CLI non-interactively to the
+      # existing project; VERCEL_TOKEN must be added as a repo secret.
+      - name: Deploy to Vercel (production)
+        working-directory: frontend
+        env:
+          VERCEL_ORG_ID: team_vMLNcmrR6xv5EllRkmqxxDtk
+          VERCEL_PROJECT_ID: prj_P7FXX9SxojgzLu7zxCcmhElR11dc
+        run: npx vercel@latest deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
