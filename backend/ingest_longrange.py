@@ -57,9 +57,16 @@ def log(msg):
 
 def fetch_json(url, params):
     qs = urllib.parse.urlencode(params)
-    req = urllib.request.Request(f"{url}?{qs}", headers={"User-Agent": "dk-surf-forecast/1.0"})
-    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as r:
-        return json.loads(r.read().decode("utf-8"))
+    last = None
+    for attempt in (1, 2, 3):
+        try:
+            req = urllib.request.Request(f"{url}?{qs}", headers={"User-Agent": "dk-surf-forecast/1.0"})
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except Exception as e:  # transient SSL/timeout blips happen (GitHub runners 2026-09-23)
+            last = e
+            time.sleep(5 * attempt)
+    raise last
 
 
 def model_series(hourly, var, model_name):

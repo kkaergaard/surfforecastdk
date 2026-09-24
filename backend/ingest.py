@@ -662,19 +662,31 @@ def fetch_harmonie_openmeteo(spot, t_from, t_to, deadline):
 
     Open-Meteo returns temperature in °C and wind in m/s (wind_speed_unit=ms);
     temperature is converted to Kelvin here to match the EDR contract
-    (compose_hours converts K → °C)."""
-    del deadline  # Open-Meteo is fast and reliable; no patient backoff needed
+    (compose_hours converts K → °C). Any network/HTTP/JSON failure becomes
+    SourceUnavailable so a bad night at Open-Meteo degrades to stale/none
+    instead of killing the whole run (observed on GitHub runners 2026-09-23)."""
     qs = urllib.parse.urlencode({
         "latitude": spot["lat"], "longitude": spot["lon"],
         "hourly": "wind_speed_10m,wind_direction_10m,wind_gusts_10m,temperature_2m",
         "models": "dmi_seamless",
         "forecast_days": 4, "timezone": "UTC", "wind_speed_unit": "ms",
     })
-    req = urllib.request.Request(
-        f"{OPENMETEO_URL}?{qs}",
-        headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    data = None
+    last_err = "no attempt"
+    for attempt in (1, 2, 3):
+        try:
+            req = urllib.request.Request(
+                f"{OPENMETEO_URL}?{qs}",
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            break
+        except Exception as e:  # URLError, TimeoutError, HTTPError, JSONDecodeError
+            last_err = f"{type(e).__name__}: {e}"
+            if attempt < 3:
+                time.sleep(5 * attempt)
+    if data is None:
+        raise SourceUnavailable(f"dmi_seamless: {last_err}")
     h = data.get("hourly", {})
     times = h.get("time") or []
     rows = []
