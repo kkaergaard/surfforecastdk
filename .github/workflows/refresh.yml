@@ -26,7 +26,9 @@ jobs:
           python-version: "3.12"
 
       - name: Python deps (GRIB parsing)
-        run: pip install cfgrib xarray
+        # xarray 2026.9.0 removed the `skipna` kwarg from Dataset.coarsen().mean()
+        # used by export_fields.py — pin below that until the code is updated.
+        run: pip install cfgrib "xarray<2026.9.0"
 
       - name: DMI WAM waves + wind (STAC bulk download)
         run: python backend/ingest_stac.py --budget-seconds 1500
